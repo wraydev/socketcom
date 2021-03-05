@@ -25,6 +25,11 @@ set(SOURCE_FILES
 include_directories(${Boost_INCLUDE_DIRS})
 
 #########################################
+#			COMPILER FLAGS				#
+#########################################
+add_definitions(-D_WIN32_WINNT=0x0601)	# Windows 7 minimum: https://docs.microsoft.com/en-us/windows/win32/winprog/using-the-windows-headers?redirectedfrom=MSDN
+
+#########################################
 #			GENERATE EXECUTABLE			#
 #########################################
 add_executable(socketcom ${SOURCE_FILES})
