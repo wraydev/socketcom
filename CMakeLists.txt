@@ -6,7 +6,7 @@ find_package(Boost 1.75.0)
 
 # Add main.cpp file of project root directory as source file
 set(SOURCE_FILES
-	main.cpp)
+	src/main.cpp)
 
 # Add executable target with SOURCE_FILES
 add_executable(socketcom ${SOURCE_FILES})
