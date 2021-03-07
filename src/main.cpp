@@ -2,14 +2,10 @@
 #include <boost/beast/websocket.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/strand.hpp>
-#include <algorithm>
-#include <cstdlib>
-#include <functional>
+#include <boost/json.hpp>
 #include <iostream>
-#include <memory>
 #include <string>
 #include <thread>
-#include <vector>
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace http = beast::http;           // from <boost/beast/http.hpp>
@@ -17,11 +13,8 @@ namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
 namespace net = boost::asio;            // from <boost/asio.hpp>
 using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 
-//------------------------------------------------------------------------------
-
 // Report a failure
-void
-fail(beast::error_code ec, char const* what)
+void fail(beast::error_code ec, char const* what)
 {
     std::cerr << what << ": " << ec.message() << "\n";
 }
@@ -34,20 +27,20 @@ class session : public std::enable_shared_from_this<session>
 
 public:
     // Take ownership of the socket
-    explicit
-        session(tcp::socket&& socket)
+    explicit session(tcp::socket&& socket)
         : ws_(std::move(socket))
     {
     }
 
     // Get on the correct executor
-    void
-        run()
+    void run()
     {
         // We need to be executing within a strand to perform async operations
         // on the I/O objects in this session. Although not strictly necessary
         // for single-threaded contexts, this example code is written to be
         // thread-safe by default.
+        
+        // dispatch the handler to the strand.
         net::dispatch(ws_.get_executor(),
             beast::bind_front_handler(
                 &session::on_run,
@@ -55,8 +48,7 @@ public:
     }
 
     // Start the asynchronous operation
-    void
-        on_run()
+    void on_run()
     {
         // Set suggested timeout settings for the websocket
         ws_.set_option(
@@ -78,8 +70,7 @@ public:
                 shared_from_this()));
     }
 
-    void
-        on_accept(beast::error_code ec)
+    void on_accept(beast::error_code ec)
     {
         if (ec)
             return fail(ec, "accept");
@@ -88,8 +79,7 @@ public:
         do_read();
     }
 
-    void
-        do_read()
+    void do_read()
     {
         // Read a message into our buffer
         ws_.async_read(
@@ -99,8 +89,7 @@ public:
                 shared_from_this()));
     }
 
-    void
-        on_read(
+    void on_read(
             beast::error_code ec,
             std::size_t bytes_transferred)
     {
@@ -113,8 +102,9 @@ public:
         if (ec)
             fail(ec, "read");
 
-        std::cout << "Received: " <<  boost::beast::buffers_to_string(buffer_.data()) << std::endl;
-
+        std::cout << "Thread ID: " << std::this_thread::get_id() << std::endl;
+        std::cout << boost::beast::buffers_to_string(buffer_.data()) << std::endl;
+        
         // Echo the message
         ws_.text(ws_.got_text());
         ws_.async_write(
@@ -124,8 +114,7 @@ public:
                 shared_from_this()));
     }
 
-    void
-        on_write(
+    void on_write(
             beast::error_code ec,
             std::size_t bytes_transferred)
     {
@@ -194,15 +183,13 @@ public:
     }
 
     // Start accepting incoming connections
-    void
-        run()
+    void run()
     {
         do_accept();
     }
 
 private:
-    void
-        do_accept()
+    void do_accept()
     {
         // The new connection gets its own strand
         acceptor_.async_accept(
@@ -210,10 +197,10 @@ private:
             beast::bind_front_handler(
                 &listener::on_accept,
                 shared_from_this()));
+        std::cout << "Made another stand!" << std::endl;
     }
 
-    void
-        on_accept(beast::error_code ec, tcp::socket socket)
+    void on_accept(beast::error_code ec, tcp::socket socket)
     {
         if (ec)
         {
@@ -245,10 +232,11 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "Port: " << argv[1] << std::endl;
-    std::cout << "Threads: " << argv[2] << std::endl;
 
     auto const port = static_cast<unsigned short>(std::atoi(argv[1]));
-    auto const threads = std::max<int>(1, std::atoi(argv[2]));
+    auto const threads = std::max<int>(5, std::atoi(argv[2]));
+
+    std::cout << "Threads: " << threads << std::endl;
 
     // The io_context is required for all I/O
     net::io_context ioc{ threads };

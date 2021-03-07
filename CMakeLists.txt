@@ -10,8 +10,8 @@ set(CMAKE_CXX_STANDARD 17)				# C++17 standard
 #########################################
 set(Boost_USE_STATIC_LIBS        ON)	# Force use of static libraries
 set(Boost_USE_MULTITHREADED      ON)	# Force multithread libraries
-set(Boost_USE_STATIC_RUNTIME OFF)		# Force disable runtime linked libraries
-find_package(Boost 1.75.0 REQUIRED date_time)		# Find Boost 1.75 minimum
+set(Boost_USE_STATIC_RUNTIME 	OFF)	# Force disable runtime linked libraries
+find_package(Boost 1.75.0 REQUIRED date_time json)		# Find Boost 1.75 minimum
 
 #########################################
 #			CONSTRUCT SOURCE			#
