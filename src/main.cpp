@@ -2,7 +2,7 @@
 #include <boost/beast/websocket.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/strand.hpp>
-#include <boost/json.hpp>
+#include <boost/json/src.hpp>
 #include <iostream>
 #include <string>
 #include <thread>
