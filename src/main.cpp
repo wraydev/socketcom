@@ -1,11 +1,14 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/strand.hpp>
-#include <boost/json/src.hpp>
+#include <boost/asio/spawn.hpp>
+#include <algorithm>
+#include <cstdlib>
+#include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace http = beast::http;           // from <boost/beast/http.hpp>
@@ -13,211 +16,116 @@ namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
 namespace net = boost::asio;            // from <boost/asio.hpp>
 using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 
+//------------------------------------------------------------------------------
+
 // Report a failure
-void fail(beast::error_code ec, char const* what)
+void
+fail(beast::error_code ec, char const* what)
 {
     std::cerr << what << ": " << ec.message() << "\n";
 }
 
 // Echoes back all received WebSocket messages
-class session : public std::enable_shared_from_this<session>
+void
+do_session(
+    websocket::stream<beast::tcp_stream>& ws,
+    net::yield_context yield)
 {
-    websocket::stream<beast::tcp_stream> ws_;
-    beast::flat_buffer buffer_;
+    beast::error_code ec;
 
-public:
-    // Take ownership of the socket
-    explicit session(tcp::socket&& socket)
-        : ws_(std::move(socket))
+    // Set suggested timeout settings for the websocket
+    ws.set_option(
+        websocket::stream_base::timeout::suggested(
+            beast::role_type::server));
+
+    // Set a decorator to change the Server of the handshake
+    ws.set_option(websocket::stream_base::decorator(
+        [](websocket::response_type& res)
+        {
+            res.set(http::field::server,
+                std::string(BOOST_BEAST_VERSION_STRING) +
+                " websocket-server-coro");
+        }));
+
+    // Accept the websocket handshake
+    ws.async_accept(yield[ec]);
+    if (ec)
+        return fail(ec, "accept");
+
+    for (;;)
     {
-    }
-
-    // Get on the correct executor
-    void run()
-    {
-        // We need to be executing within a strand to perform async operations
-        // on the I/O objects in this session. Although not strictly necessary
-        // for single-threaded contexts, this example code is written to be
-        // thread-safe by default.
-        
-        // dispatch the handler to the strand.
-        net::dispatch(ws_.get_executor(),
-            beast::bind_front_handler(
-                &session::on_run,
-                shared_from_this()));
-    }
-
-    // Start the asynchronous operation
-    void on_run()
-    {
-        // Set suggested timeout settings for the websocket
-        ws_.set_option(
-            websocket::stream_base::timeout::suggested(
-                beast::role_type::server));
-
-        // Set a decorator to change the Server of the handshake
-        ws_.set_option(websocket::stream_base::decorator(
-            [](websocket::response_type& res)
-            {
-                res.set(http::field::server,
-                    std::string(BOOST_BEAST_VERSION_STRING) +
-                    " websocket-server-async");
-            }));
-        // Accept the websocket handshake
-        ws_.async_accept(
-            beast::bind_front_handler(
-                &session::on_accept,
-                shared_from_this()));
-    }
-
-    void on_accept(beast::error_code ec)
-    {
-        if (ec)
-            return fail(ec, "accept");
+        // This buffer will hold the incoming message
+        beast::flat_buffer buffer;
 
         // Read a message
-        do_read();
-    }
-
-    void do_read()
-    {
-        // Read a message into our buffer
-        ws_.async_read(
-            buffer_,
-            beast::bind_front_handler(
-                &session::on_read,
-                shared_from_this()));
-    }
-
-    void on_read(
-            beast::error_code ec,
-            std::size_t bytes_transferred)
-    {
-        boost::ignore_unused(bytes_transferred);
+        ws.async_read(buffer, yield[ec]);
 
         // This indicates that the session was closed
         if (ec == websocket::error::closed)
-            return;
+            break;
 
         if (ec)
-            fail(ec, "read");
+            return fail(ec, "read");
 
         std::cout << "Thread ID: " << std::this_thread::get_id() << std::endl;
-        std::cout << boost::beast::buffers_to_string(buffer_.data()) << std::endl;
-        
-        // Echo the message
-        ws_.text(ws_.got_text());
-        ws_.async_write(
-            buffer_.data(),
-            beast::bind_front_handler(
-                &session::on_write,
-                shared_from_this()));
-    }
+        std::cout << boost::beast::buffers_to_string(buffer.data()) << std::endl;
 
-    void on_write(
-            beast::error_code ec,
-            std::size_t bytes_transferred)
-    {
-        boost::ignore_unused(bytes_transferred);
-
+        // Echo the message back
+        ws.text(ws.got_text());
+        ws.async_write(buffer.data(), yield[ec]);
         if (ec)
             return fail(ec, "write");
-
-        // Clear the buffer
-        buffer_.consume(buffer_.size());
-
-        // Do another read
-        do_read();
     }
-};
+}
 
 //------------------------------------------------------------------------------
 
 // Accepts incoming connections and launches the sessions
-class listener : public std::enable_shared_from_this<listener>
+void
+do_listen(
+    net::io_context& ioc,
+    tcp::endpoint endpoint,
+    net::yield_context yield)
 {
-    net::io_context& ioc_;
-    tcp::acceptor acceptor_;
+    beast::error_code ec;
 
-public:
-    listener(
-        net::io_context& ioc,
-        tcp::endpoint endpoint)
-        : ioc_(ioc)
-        , acceptor_(ioc)
+    // Open the acceptor
+    tcp::acceptor acceptor(ioc);
+    acceptor.open(endpoint.protocol(), ec);
+    if (ec)
+        return fail(ec, "open");
+
+    // Allow address reuse
+    acceptor.set_option(net::socket_base::reuse_address(true), ec);
+    if (ec)
+        return fail(ec, "set_option");
+
+    // Bind to the server address
+    acceptor.bind(endpoint, ec);
+    if (ec)
+        return fail(ec, "bind");
+
+    // Start listening for connections
+    acceptor.listen(net::socket_base::max_listen_connections, ec);
+    if (ec)
+        return fail(ec, "listen");
+
+    for (;;)
     {
-        beast::error_code ec;
-
-        // Open the acceptor
-        acceptor_.open(endpoint.protocol(), ec);
+        tcp::socket socket(ioc);
+        acceptor.async_accept(socket, yield[ec]);
         if (ec)
-        {
-            fail(ec, "open");
-            return;
-        }
-
-        // Allow address reuse
-        acceptor_.set_option(net::socket_base::reuse_address(true), ec);
-        if (ec)
-        {
-            fail(ec, "set_option");
-            return;
-        }
-
-        // Bind to the server address
-        acceptor_.bind(endpoint, ec);
-        if (ec)
-        {
-            fail(ec, "bind");
-            return;
-        }
-
-        // Start listening for connections
-        acceptor_.listen(
-            net::socket_base::max_listen_connections, ec);
-        if (ec)
-        {
-            fail(ec, "listen");
-            return;
-        }
-    }
-
-    // Start accepting incoming connections
-    void run()
-    {
-        do_accept();
-    }
-
-private:
-    void do_accept()
-    {
-        // The new connection gets its own strand
-        acceptor_.async_accept(
-            net::make_strand(ioc_),
-            beast::bind_front_handler(
-                &listener::on_accept,
-                shared_from_this()));
-        std::cout << "Made another stand!" << std::endl;
-    }
-
-    void on_accept(beast::error_code ec, tcp::socket socket)
-    {
-        if (ec)
-        {
             fail(ec, "accept");
-        }
         else
-        {
-            // Create the session and run it
-            std::make_shared<session>(std::move(socket))->run();
-        }
-
-        // Accept another connection
-        do_accept();
+            boost::asio::spawn(
+                acceptor.get_executor(),
+                std::bind(
+                    &do_session,
+                    websocket::stream<
+                    beast::tcp_stream>(std::move(socket)),
+                    std::placeholders::_1));
     }
-};
-
-//------------------------------------------------------------------------------
+}
 
 int main(int argc, char* argv[])
 {
@@ -225,24 +133,24 @@ int main(int argc, char* argv[])
     if (argc != 3)
     {
         std::cerr <<
-            "Usage: socketcom <port> <threads>\n" <<
+            "Usage: websocket-server-coro <address> <port> <threads>\n" <<
             "Example:\n" <<
-            "    websocket-server-async 80 1\n";
+            "    websocket-server-coro 8080 1\n";
         return EXIT_FAILURE;
     }
-
-    std::cout << "Port: " << argv[1] << std::endl;
-
     auto const port = static_cast<unsigned short>(std::atoi(argv[1]));
-    auto const threads = std::max<int>(5, std::atoi(argv[2]));
-
-    std::cout << "Threads: " << threads << std::endl;
+    auto const threads = std::max<int>(1, std::atoi(argv[2]));
 
     // The io_context is required for all I/O
-    net::io_context ioc{ threads };
+    net::io_context ioc(threads);
 
-    // Create and launch a listening port
-    std::make_shared<listener>(ioc, tcp::endpoint{ boost::asio::ip::tcp::v4(), port })->run();
+    // Spawn a listening port
+    boost::asio::spawn(ioc,
+        std::bind(
+            &do_listen,
+            std::ref(ioc),
+            tcp::endpoint{ boost::asio::ip::tcp::v4(), port },
+            std::placeholders::_1));
 
     // Run the I/O service on the requested number of threads
     std::vector<std::thread> v;
