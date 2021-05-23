@@ -1,11 +1,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/asio/spawn.hpp>
-#include <algorithm>
-#include <cstdlib>
-#include <functional>
 #include <iostream>
-#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,17 +15,13 @@ using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
 //------------------------------------------------------------------------------
 
 // Report a failure
-void
-fail(beast::error_code ec, char const* what)
+void fail(beast::error_code ec, char const* what)
 {
     std::cerr << what << ": " << ec.message() << "\n";
 }
 
 // Echoes back all received WebSocket messages
-void
-do_session(
-    websocket::stream<beast::tcp_stream>& ws,
-    net::yield_context yield)
+void do_session(websocket::stream<beast::tcp_stream>& ws, net::yield_context yield)
 {
     beast::error_code ec;
 
@@ -81,11 +73,7 @@ do_session(
 //------------------------------------------------------------------------------
 
 // Accepts incoming connections and launches the sessions
-void
-do_listen(
-    net::io_context& ioc,
-    tcp::endpoint endpoint,
-    net::yield_context yield)
+void do_listen(net::io_context& ioc, tcp::endpoint endpoint, net::yield_context yield)
 {
     beast::error_code ec;
 
