@@ -1,6 +1,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/serial_port.hpp>
 #include <boost/json/src.hpp>
 #include <iostream>
 #include <string>
